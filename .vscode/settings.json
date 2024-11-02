@@ -1,0 +1,11 @@
+{
+    "Lua.diagnostics.globals": [
+        "getObjectsWithTag",
+        "getAllObjects",
+        "broadcastToAll",
+        "Global",
+        "onLoad",
+        "self",
+        "printToColor"
+    ]
+}
