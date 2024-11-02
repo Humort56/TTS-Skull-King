@@ -1,7 +1,9 @@
 --[[ Lua code. See documentation: https://api.tabletopsimulator.com/ --]]
 
 PLAYER_COLORS = {'Red','Green', 'Teal', 'Blue', 'White', 'Brown'}
+SEATED_PLAYERS = {}
 GAME_STARTED = false
+FIRST_PLAYER = nil
 
 --[[ The onLoad event is called after the game save finishes loading. --]]
 function onLoad()
@@ -20,6 +22,16 @@ function megaFreeze()
    end
 end
 
+function GetObjectWithTag(tag)
+   local objects = getObjectsWithTag(tag)
+
+   if #objects == 0 then
+      return nil
+   end
+
+   return objects[1]
+end
+
 function GetRound()
    local objects = getObjectsWithTag("RoundCounter")
    local roundCounter = objects[1]
@@ -35,17 +47,63 @@ function SetRound(value)
    roundCounter.setValue(tonumber(value))
 end
 
-function StartGame()
-   for _, pcolor in pairs(PLAYER_COLORS) do
-      if not Player[pcolor].seated then
-         local objects = getObjectsWithTag('count' .. pcolor)
-         objects[1].destruct()
+function GetFirstPlayer()
+   return SEATED_PLAYERS[FIRST_PLAYER_INDEX]
+end
 
-         for _, object in pairs(getObjectsWithTag('t' .. pcolor)) do
-            object.destruct()
+function NextFirstPlayer()
+   if FIRST_PLAYER_INDEX == #SEATED_PLAYERS then
+      FIRST_PLAYER_INDEX = 1
+   else
+      FIRST_PLAYER_INDEX = FIRST_PLAYER_INDEX + 1
+   end
+end
+
+function SetFirstPlayerToken()
+   local tokenFirstPlayer = GetObjectWithTag('tokenFirstPlayer')
+
+   if tokenFirstPlayer == nil then
+      return
+   end
+
+   local snapPoints = Global.getSnapPoints()
+   local firstPlayerSnap = nil
+
+   for _, snapPoint in pairs(snapPoints) do
+      for _, tag in pairs(snapPoint.tags) do
+         if tag == 'snapFirstPlayer' .. GetFirstPlayer() then
+            firstPlayerSnap = snapPoint
          end
       end
    end
+
+   if firstPlayerSnap == nil then
+      return
+   end
+
+   tokenFirstPlayer.setPosition(firstPlayerSnap.position)
+   tokenFirstPlayer.setRotation(firstPlayerSnap.rotation)
+end
+
+function StartGame()
+   for _, pcolor in pairs(PLAYER_COLORS) do
+      if Player[pcolor].seated then
+         table.insert(SEATED_PLAYERS, pcolor)
+      else
+         local counter = GetObjectWithTag('count' .. pcolor)
+
+         if counter ~= nil then
+            counter.destruct()
+
+            for _, tile in pairs(getObjectsWithTag('t' .. pcolor)) do
+               tile.destruct()
+            end
+         end
+      end
+   end
+
+   FIRST_PLAYER_INDEX = math.random(#SEATED_PLAYERS)
+   SetFirstPlayerToken()
 end
 
 function DealCards()
@@ -80,6 +138,35 @@ function DealCards()
         )
      end
    end
+end
+
+function ResetDeck()
+   local objects = getAllObjects()
+
+   for i = 1, #objects, 1 do
+      local obj = objects[i]
+      if(obj.name == 'Deck' or obj.name == 'Card') then
+        if obj ~= nil then
+          objects[i].setRotation({0, 180, 180})
+          objects[i].setPosition({-45.00, 2.02, -3.00})
+        end
+     end
+   end
+
+   for _, tile in pairs(getObjectsWithTag('Tile')) do
+     if not tile.is_face_down then
+       tile.setLock(false)
+       tile.clearButtons()
+       tile.flip()
+       Wait.frames(function() tile.setLock(true) end, 50)
+     end
+   end
+
+   local round = GetRound()
+   SetRound(round + 1)
+
+   NextFirstPlayer()
+   SetFirstPlayerToken()
 end
 
 function TileCreateButton(tile, functionName)
