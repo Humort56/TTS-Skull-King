@@ -7,14 +7,14 @@ FIRST_PLAYER = nil
 
 --[[ The onLoad event is called after the game save finishes loading. --]]
 function onLoad()
-    megaFreeze()
+    MegaFreeze()
 end
 
-function megaFreeze()
+function MegaFreeze()
    local megaFreezeIT = {'9a3403'}
    --megaFreeze ACTIVATE!
    for i = 1, #megaFreezeIT, 1 do
-      obj = getObjectFromGUID(megaFreezeIT[i])
+      local obj = getObjectFromGUID(megaFreezeIT[i])
       if obj ~= nil then
          obj.interactable = false
          obj.tooltip = false

@@ -11,6 +11,8 @@
         "Color",
         "broadcastToColor",
         "printToAll",
-        "Player"
+        "Player",
+        "onUpdate",
+        "getObjectFromGUID"
     ]
 }
