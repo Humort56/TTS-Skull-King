@@ -23,8 +23,14 @@ function resetDeck()
 
   for _, tile in pairs(getObjectsWithTag('Tile')) do
     if not tile.is_face_down then
+      tile.setLock(false)
+      tile.clearButtons()
       tile.flip()
+      Wait.frames(function() tile.setLock(true) end, 50)
     end
   end
+
+  local round = Global.call('GetRound')
+  Global.call('SetRound', round + 1)
 
 end

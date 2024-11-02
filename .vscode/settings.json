@@ -6,6 +6,11 @@
         "Global",
         "onLoad",
         "self",
-        "printToColor"
+        "printToColor",
+        "Wait",
+        "Color",
+        "broadcastToColor",
+        "printToAll",
+        "Player"
     ]
 }
