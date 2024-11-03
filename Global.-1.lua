@@ -4,6 +4,7 @@ PLAYER_COLORS = {'Red','Green', 'Teal', 'Blue', 'White', 'Brown'}
 SEATED_PLAYERS = {}
 GAME_STARTED = false
 FIRST_PLAYER = nil
+CARD_POSITION = 1
 
 --[[ The onLoad event is called after the game save finishes loading. --]]
 function onLoad()
@@ -25,10 +26,6 @@ end
 function GetObjectWithTag(tag)
    local objects = getObjectsWithTag(tag)
 
-   if #objects == 0 then
-      return nil
-   end
-
    return objects[1]
 end
 
@@ -49,6 +46,57 @@ end
 
 function GetFirstPlayer()
    return SEATED_PLAYERS[FIRST_PLAYER_INDEX]
+end
+
+function CardCreateButton()
+   for _, pcolor in pairs(SEATED_PLAYERS) do
+      local player = Player[pcolor]
+      
+      for _, card in pairs(player.getHandObjects()) do
+         card.createButton({
+            click_function = "PlayCard",
+            color = {r=0, g=0, b=0, a=0},
+            width = 1050,
+            height = 1500
+         })
+      end
+   end
+end
+
+function GroupCards()
+   local zone = getObjectFromGUID("2b6f57")
+   local objects = zone.getObjects()
+
+   for _, card in pairs(objects) do
+      card.setLock(false)
+   end
+
+   local deck = group(objects)[1]
+end
+
+function PlayCard(card, pcolor)
+   local snapPoints = Global.getSnapPoints()
+   local snapTrickCard = nil
+
+   for _, snapPoint in pairs(snapPoints) do
+      for _, tag in pairs(snapPoint.tags) do
+         if tag == 'snapTrickCard' .. CARD_POSITION then
+            snapTrickCard = snapPoint
+         end
+      end
+   end
+
+   if snapTrickCard == nil then
+      return
+   end
+
+   CARD_POSITION = CARD_POSITION + 1
+
+   card.clearButtons()
+
+   card.setPositionSmooth(snapTrickCard.position, false, false)
+   card.setRotationSmooth({x=snapTrickCard.rotation.x, y=snapTrickCard.rotation.y, z=0}, false, false)
+   card.setLock(true)
 end
 
 function NextFirstPlayer()
@@ -120,6 +168,8 @@ function DealCards()
         if obj ~= nil then
           obj.shuffle()
           obj.deal(round)
+
+          Wait.frames(function() CardCreateButton() end, 50)
         end
      end
    end
@@ -141,6 +191,7 @@ function DealCards()
 end
 
 function ResetDeck()
+   CARD_POSITION = 1
    local objects = getAllObjects()
 
    for i = 1, #objects, 1 do
@@ -165,8 +216,11 @@ function ResetDeck()
    local round = GetRound()
    SetRound(round + 1)
 
-   NextFirstPlayer()
-   SetFirstPlayerToken()
+   if GAME_STARTED then
+      NextFirstPlayer()
+      SetFirstPlayerToken()
+   end
+
 end
 
 function TileCreateButton(tile, functionName)

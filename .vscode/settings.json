@@ -13,6 +13,8 @@
         "printToAll",
         "Player",
         "onUpdate",
-        "getObjectFromGUID"
+        "getObjectFromGUID",
+        "group",
+        "log"
     ]
 }
