@@ -2,13 +2,37 @@
 
 PLAYER_COLORS = {'Red','Green', 'Teal', 'Blue', 'White', 'Brown'}
 SEATED_PLAYERS = {}
+PLAYERS_BET = {}
 GAME_STARTED = false
-FIRST_PLAYER = nil
+FIRST_PLAYER_INDEX = nil
 CARD_POSITION = 1
 
+
+function onSave()
+   local saved_data = JSON.encode({
+      GAME_STARTED=GAME_STARTED,
+      SEATED_PLAYERS=SEATED_PLAYERS,
+      FIRST_PLAYER_INDEX=FIRST_PLAYER_INDEX,
+      CARD_POSITION=CARD_POSITION,
+      PLAYERS_BET=PLAYERS_BET
+   })
+   return saved_data
+end
+
 --[[ The onLoad event is called after the game save finishes loading. --]]
-function onLoad()
-    MegaFreeze()
+function onLoad(saved_data)
+   MegaFreeze()
+
+   if saved_data ~= '' then
+      local loaded_data = JSON.decode(saved_data)
+      GAME_STARTED = loaded_data.GAME_STARTED or GAME_STARTED
+      SEATED_PLAYERS = loaded_data.SEATED_PLAYERS or SEATED_PLAYERS
+      FIRST_PLAYER_INDEX = loaded_data.FIRST_PLAYER_INDEX or FIRST_PLAYER_INDEX
+      CARD_POSITION = loaded_data.CARD_POSITION or CARD_POSITION
+      PLAYERS_BET = loaded_data.PLAYERS_BET or PLAYERS_BET
+  end
+
+  CardCreateButton()  
 end
 
 function MegaFreeze()
@@ -63,9 +87,21 @@ function CardCreateButton()
    end
 end
 
+function PlayCardAvailable()
+   local isAvailable = true
+
+   for _, ready in pairs(PLAYERS_BET) do
+      isAvailable = isAvailable and ready
+   end
+
+   return isAvailable
+end
+
 function GroupCards()
    local zone = getObjectFromGUID("2b6f57")
    local objects = zone.getObjects()
+
+   CARD_POSITION = 1
 
    for _, card in pairs(objects) do
       card.setLock(false)
@@ -75,6 +111,10 @@ function GroupCards()
 end
 
 function PlayCard(card, pcolor)
+   if not PlayCardAvailable() then
+      return
+   end
+
    local snapPoints = Global.getSnapPoints()
    local snapTrickCard = nil
 
@@ -137,6 +177,7 @@ function StartGame()
    for _, pcolor in pairs(PLAYER_COLORS) do
       if Player[pcolor].seated then
          table.insert(SEATED_PLAYERS, pcolor)
+         PLAYERS_BET[pcolor] = false
       else
          local counter = GetObjectWithTag('count' .. pcolor)
 
@@ -194,6 +235,10 @@ function ResetDeck()
    CARD_POSITION = 1
    local objects = getAllObjects()
 
+   for _, pcolor in pairs(SEATED_PLAYERS) do
+      PLAYERS_BET[pcolor] = false
+   end
+
    for i = 1, #objects, 1 do
       local obj = objects[i]
       if(obj.name == 'Deck' or obj.name == 'Card') then
@@ -239,6 +284,8 @@ function ChooseBet(tile, pcolor)
       return
    end
 
+   PLAYERS_BET[pcolor] = true
+
    local stringValue = tile.getGMNotes()
 
    tile.clearButtons()
@@ -264,6 +311,8 @@ function CancelBet(tile, pcolor, alt)
       broadcastToColor("You can't click the tile of another player.", pcolor, Color.fromString("Red"))
       return
    end
+
+   PLAYERS_BET[pcolor] = false
 
    tile.clearButtons()
 
