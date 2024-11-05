@@ -3,20 +3,25 @@
 PLAYER_COLORS = {'Red','Green', 'Teal', 'Blue', 'White', 'Brown'}
 SEATED_PLAYERS = {}
 PLAYERS_BET = {}
+PLAYERS_TRICKS = {}
 GAME_STARTED = false
+BETTING_FINISHED = false
+TRICK_FINISHED = false
 FIRST_PLAYER_INDEX = nil
-CURRENT_BETTOR_INDEX = nil
+CURRENT_PLAYER_INDEX = nil
 CARD_POSITION = 1
 
 
 function onSave()
    local saved_data = JSON.encode({
       GAME_STARTED=GAME_STARTED,
+      BETTING_FINISHED=BETTING_FINISHED,
+      TRICK_FINISHED=TRICK_FINISHED,
       SEATED_PLAYERS=SEATED_PLAYERS,
       FIRST_PLAYER_INDEX=FIRST_PLAYER_INDEX,
       CARD_POSITION=CARD_POSITION,
       PLAYERS_BET=PLAYERS_BET,
-      CURRENT_BETTOR_INDEX=CURRENT_BETTOR_INDEX
+      CURRENT_PLAYER_INDEX=CURRENT_PLAYER_INDEX
    })
    return saved_data
 end
@@ -28,22 +33,20 @@ function onLoad(saved_data)
    if saved_data ~= '' then
       local loaded_data = JSON.decode(saved_data)
       GAME_STARTED = loaded_data.GAME_STARTED or GAME_STARTED
+      BETTING_FINISHED = loaded_data.BETTING_FINISHED or BETTING_FINISHED
+      TRICK_FINISHED = loaded_data.TRICK_FINISHED or TRICK_FINISHED
       SEATED_PLAYERS = loaded_data.SEATED_PLAYERS or SEATED_PLAYERS
       FIRST_PLAYER_INDEX = loaded_data.FIRST_PLAYER_INDEX or FIRST_PLAYER_INDEX
       CARD_POSITION = loaded_data.CARD_POSITION or CARD_POSITION
       PLAYERS_BET = loaded_data.PLAYERS_BET or PLAYERS_BET
-      CURRENT_BETTOR_INDEX = loaded_data.CURRENT_BETTOR_INDEX or CURRENT_BETTOR_INDEX
+      CURRENT_PLAYER_INDEX = loaded_data.CURRENT_PLAYER_INDEX or CURRENT_PLAYER_INDEX
   end
 
-  if GAME_STARTED then
-      for pcolor, ready in pairs(PLAYERS_BET) do
+  if GAME_STARTED and not BETTING_FINISHED then
+      for _, pcolor in pairs(SEATED_PLAYERS) do
          for _, tile in pairs(GetTiles(pcolor)) do
             if not tile.is_face_down then
-               if ready then
-                  TileCreateButton(tile, "CancelBet")
-               else
-                  TileCreateButton(tile, "ChooseBet")
-               end
+               TileCreateButton(tile, "ChooseBet")
             end
          end
       end
@@ -62,6 +65,12 @@ function MegaFreeze()
          obj.tooltip = false
       end
    end
+end
+
+function GetText()
+   local text = getObjectFromGUID("4a6a13")
+
+   return text.clone()
 end
 
 function GetObjectWithTag(tag)
@@ -89,6 +98,10 @@ function GetFirstPlayer()
    return SEATED_PLAYERS[FIRST_PLAYER_INDEX]
 end
 
+function GetLastPlayer()
+   return SEATED_PLAYERS[GetPreviousPlayerIndex(FIRST_PLAYER_INDEX)]
+end
+
 function CardCreateButton()
    for _, pcolor in pairs(SEATED_PLAYERS) do
       local player = Player[pcolor]
@@ -104,17 +117,28 @@ function CardCreateButton()
    end
 end
 
-function PlayCardAvailable()
-   local isAvailable = true
+function GetTricksPlayed()
+   local tricks_count = 0
 
-   for _, ready in pairs(PLAYERS_BET) do
-      isAvailable = isAvailable and ready
+   for _, tricks_won in pairs(PLAYERS_TRICKS) do
+      tricks_count = tricks_count + tricks_won
    end
 
-   return isAvailable
+   return tricks_count
 end
 
-function GroupCards()
+function ResetTricks()
+   for _, pcolor in pairs(SEATED_PLAYERS) do
+      PLAYERS_TRICKS[pcolor] = 0
+   end
+end
+
+function GroupCards(button, pcolor)
+   if not TRICK_FINISHED then
+      broadcastToColor("You can only claim the trick when everyone played a card", pcolor, "Red")
+      return
+   end
+
    local zone = getObjectFromGUID("2b6f57")
    local objects = zone.getObjects()
 
@@ -124,17 +148,34 @@ function GroupCards()
       card.setLock(false)
    end
 
+   for _, text in pairs(getObjectsWithTag("TextToRemove")) do
+      text.destruct()
+   end
+
+   PLAYERS_TRICKS[pcolor] = PLAYERS_TRICKS[pcolor] + 1
+   TRICK_FINISHED = false
+
    local deck = group(objects)[1]
+
+   if GetTricksPlayed() == GetRound() then
+      -- calculate score and modify player's counter
+   end
+
+   CURRENT_PLAYER_INDEX = GetPlayerIndex(pcolor)
 end
 
 function PlayCard(card, pcolor)
-   if not PlayCardAvailable() then
+   if not BETTING_FINISHED or TRICK_FINISHED then
       return
    end
 
-   if SEATED_PLAYERS[CURRENT_BETTOR_INDEX] ~= pcolor then
+   if SEATED_PLAYERS[CURRENT_PLAYER_INDEX] ~= pcolor then
       broadcastToColor("It is not your turn to play.", pcolor, Color.fromString("Red"))
       return
+   end
+
+   if GetPreviousPlayerIndex(FIRST_PLAYER_INDEX) == CURRENT_PLAYER_INDEX then
+      TRICK_FINISHED = true
    end
 
    local snapPoints = Global.getSnapPoints()
@@ -153,13 +194,50 @@ function PlayCard(card, pcolor)
    end
 
    CARD_POSITION = CARD_POSITION + 1
-   CURRENT_BETTOR_INDEX = GetNextPlayerIndex(CURRENT_BETTOR_INDEX)
+   CURRENT_PLAYER_INDEX = GetNextPlayerIndex(CURRENT_PLAYER_INDEX)
 
    card.clearButtons()
 
-   card.setPositionSmooth(snapTrickCard.position, false, false)
-   card.setRotationSmooth({x=snapTrickCard.rotation.x, y=snapTrickCard.rotation.y, z=0}, false, false)
+   local snapPosition = snapTrickCard.position
+   card.setPositionSmooth(snapPosition, false, false)
+   card.setRotationSmooth(
+      {
+         x=snapTrickCard.rotation.x,
+         y=snapTrickCard.rotation.y,
+         z=0
+      },
+      false,
+      false
+   )
    card.setLock(true)
+
+   Wait.frames(
+      function()
+         local textTop = GetText()
+         textTop.addTag("TextToRemove")
+         textTop.TextTool.setValue(Player[pcolor].steam_name)
+         textTop.TextTool.setFontColor(Color.fromString(pcolor))
+         
+         local textRotation = textTop.getRotation()
+         local textBottom = textTop.clone()
+
+         textTop.setPosition({
+            x=snapPosition.x,
+            y=snapPosition.y,
+            z=snapPosition.z + 2.8
+         })
+
+         textBottom.setPosition({
+            x=snapPosition.x,
+            y=snapPosition.y,
+            z=snapPosition.z - 2.8
+         })
+
+         textTop.setRotation({x=textRotation.x, y=snapTrickCard.rotation.y, z=textRotation.z})
+         textBottom.setRotation({x=textRotation.x, y=0, z=textRotation.z})
+      end,
+      40
+   )
 end
 
 function GetPlayerIndex(player_color)
@@ -188,7 +266,7 @@ end
 
 function NextFirstPlayer()
    FIRST_PLAYER_INDEX = GetNextPlayerIndex(FIRST_PLAYER_INDEX)
-   CURRENT_BETTOR_INDEX = FIRST_PLAYER_INDEX
+   CURRENT_PLAYER_INDEX = FIRST_PLAYER_INDEX
 end
 
 function SetFirstPlayerToken()
@@ -238,8 +316,9 @@ function StartGame()
    end
 
    FIRST_PLAYER_INDEX = math.random(#SEATED_PLAYERS)
-   CURRENT_BETTOR_INDEX = FIRST_PLAYER_INDEX
+   CURRENT_PLAYER_INDEX = FIRST_PLAYER_INDEX
    SetFirstPlayerToken()
+   ResetTricks()
 end
 
 function DealCards()
@@ -311,6 +390,7 @@ function ResetDeck()
    if GAME_STARTED then
       NextFirstPlayer()
       SetFirstPlayerToken()
+      ResetTricks()
    end
 
 end
@@ -323,87 +403,53 @@ function TileCreateButton(tile, functionName)
    })
 end
 
+function HideNonBetTiles()
+   for pcolor, bet in pairs(PLAYERS_BET) do
+      for _, tile in pairs(GetTiles(pcolor)) do
+         if not tile.is_face_down then
+            tile.clearButtons()
+         
+            if tonumber(tile.getGMNotes()) ~= bet then
+               tile.setLock(false)
+               tile.flip()
+               Wait.frames(
+                  function()
+                     tile.setLock(true)
+                  end,
+                  40
+               )
+            end
+         end
+      end
+   end
+end
+
+function IsBettingFinished()
+   for _, pcolor in pairs(SEATED_PLAYERS) do
+      if false == PLAYERS_BET[pcolor] then
+         return false
+      end
+   end
+
+   return true
+end
+
 function ChooseBet(tile, pcolor)
    if not tile.hasTag('t' .. pcolor) then
       broadcastToColor("You can't click the tile of another player.", pcolor, Color.fromString("Red"))
       return
    end
 
-   if SEATED_PLAYERS[CURRENT_BETTOR_INDEX] ~= pcolor then
-      broadcastToColor("It is not your turn to bet.", pcolor, Color.fromString("Red"))
-      return
-   end
-
-   PLAYERS_BET[pcolor] = true
-
    local stringValue = tile.getGMNotes()
 
-   tile.clearButtons()
+   PLAYERS_BET[pcolor] = tonumber(stringValue)
 
-   for _, tileToFlip in pairs(GetTiles(pcolor)) do
-      if not tileToFlip.is_face_down and tileToFlip.getGMNotes() ~= stringValue then
-         tileToFlip.setLock(false)
-         tileToFlip.clearButtons()
-         tileToFlip.flip()
-         Wait.frames(
-            function()
-               tileToFlip.setLock(true)
-            end,
-            40
-         )
-      end
+   broadcastToColor("You are now betting on winning " .. stringValue .. " trick(s)", pcolor)
+
+   if IsBettingFinished() then
+      BETTING_FINISHED = true
+      HideNonBetTiles()
    end
-
-   CURRENT_BETTOR_INDEX = GetNextPlayerIndex(CURRENT_BETTOR_INDEX)
-
-   Wait.frames(
-      function()
-         TileCreateButton(tile, "CancelBet")
-      end,
-      40
-   )
-
-   -- need to use stringValue
-end
-
-function CancelBet(tile, pcolor)
-   if not tile.hasTag('t' .. pcolor) then
-      broadcastToColor("You can't click the tile of another player.", pcolor, Color.fromString("Red"))
-      return
-   end
-
-   local player_index = GetPlayerIndex(pcolor)
-
-   -- or if you are the last player and first player did not play cards
-   if PLAYERS_BET[SEATED_PLAYERS[GetNextPlayerIndex(player_index)]] then
-      broadcastToColor("You can no longer cancel your bet.", pcolor, Color.fromString("Red"))
-      return
-   end
-
-   PLAYERS_BET[pcolor] = false
-
-   tile.clearButtons()
-
-   local round = GetRound()
-
-   for _, tile in pairs(GetTiles(pcolor)) do
-      if tonumber(tile.getGMNotes()) <= round then
-         if tile.is_face_down then
-            tile.setLock(false)
-            tile.flip()
-         end
-         
-         Wait.frames(
-            function()
-               TileCreateButton(tile, "ChooseBet")
-               tile.setLock(true)
-            end,
-            40
-         )
-      end
-   end
-
-   CURRENT_BETTOR_INDEX = player_index
 end
 
 function GetTiles(pcolor)
