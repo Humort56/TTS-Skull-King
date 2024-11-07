@@ -8,6 +8,7 @@ GAME_STARTED = false
 BETTING_FINISHED = false
 TRICK_FINISHED = false
 FIRST_PLAYER_INDEX = nil
+FIRST_PLAYER_SET_INDEX = nil
 CURRENT_PLAYER_INDEX = nil
 CARD_POSITION = 1
 
@@ -19,8 +20,10 @@ function onSave()
       TRICK_FINISHED=TRICK_FINISHED,
       SEATED_PLAYERS=SEATED_PLAYERS,
       FIRST_PLAYER_INDEX=FIRST_PLAYER_INDEX,
+      FIRST_PLAYER_SET_INDEX=FIRST_PLAYER_SET_INDEX,
       CARD_POSITION=CARD_POSITION,
       PLAYERS_BET=PLAYERS_BET,
+      PLAYERS_TRICKS=PLAYERS_TRICKS,
       CURRENT_PLAYER_INDEX=CURRENT_PLAYER_INDEX
    })
    return saved_data
@@ -37,8 +40,10 @@ function onLoad(saved_data)
       TRICK_FINISHED = loaded_data.TRICK_FINISHED or TRICK_FINISHED
       SEATED_PLAYERS = loaded_data.SEATED_PLAYERS or SEATED_PLAYERS
       FIRST_PLAYER_INDEX = loaded_data.FIRST_PLAYER_INDEX or FIRST_PLAYER_INDEX
+      FIRST_PLAYER_SET_INDEX = loaded_data.FIRST_PLAYER_SET_INDEX or FIRST_PLAYER_SET_INDEX
       CARD_POSITION = loaded_data.CARD_POSITION or CARD_POSITION
       PLAYERS_BET = loaded_data.PLAYERS_BET or PLAYERS_BET
+      PLAYERS_TRICKS = loaded_data.PLAYERS_TRICKS or PLAYERS_TRICKS
       CURRENT_PLAYER_INDEX = loaded_data.CURRENT_PLAYER_INDEX or CURRENT_PLAYER_INDEX
   end
 
@@ -159,9 +164,44 @@ function GroupCards(button, pcolor)
 
    if GetTricksPlayed() == GetRound() then
       -- calculate score and modify player's counter
+      ScorePoints()
    end
 
-   CURRENT_PLAYER_INDEX = GetPlayerIndex(pcolor)
+   FIRST_PLAYER_SET_INDEX = GetPlayerIndex(pcolor)
+   CURRENT_PLAYER_INDEX = FIRST_PLAYER_SET_INDEX
+end
+
+function ScorePoints()
+   local round = GetRound()
+
+   for _, pcolor in pairs(SEATED_PLAYERS) do
+      local counter = GetObjectWithTag('count' .. pcolor)
+      local points = 0
+
+      if 0 == PLAYERS_BET[pcolor] then
+         if 0 == PLAYERS_TRICKS[pcolor] then
+            points = round * 10 
+         else
+            points = round * -10
+         end
+      else
+         if PLAYERS_BET[pcolor] == PLAYERS_TRICKS[pcolor] then
+            points = PLAYERS_TRICKS[pcolor] * 20
+         else
+            points = math.abs(PLAYERS_TRICKS[pcolor] - PLAYERS_BET[pcolor]) * - 10
+         end
+      end
+
+      local verb = "lost"
+
+      if points > 0 then
+         verb = "won"
+      end
+
+      broadcastToColor("You have " .. verb .. " " .. math.abs(points) .. " points", pcolor)
+
+      counter.setValue(counter.getValue() + points)
+   end
 end
 
 function PlayCard(card, pcolor)
@@ -174,7 +214,7 @@ function PlayCard(card, pcolor)
       return
    end
 
-   if GetPreviousPlayerIndex(FIRST_PLAYER_INDEX) == CURRENT_PLAYER_INDEX then
+   if GetPreviousPlayerIndex(FIRST_PLAYER_SET_INDEX) == CURRENT_PLAYER_INDEX then
       TRICK_FINISHED = true
    end
 
@@ -266,6 +306,7 @@ end
 
 function NextFirstPlayer()
    FIRST_PLAYER_INDEX = GetNextPlayerIndex(FIRST_PLAYER_INDEX)
+   FIRST_PLAYER_SET_INDEX = FIRST_PLAYER_INDEX
    CURRENT_PLAYER_INDEX = FIRST_PLAYER_INDEX
 end
 
@@ -316,6 +357,7 @@ function StartGame()
    end
 
    FIRST_PLAYER_INDEX = math.random(#SEATED_PLAYERS)
+   FIRST_PLAYER_SET_INDEX = FIRST_PLAYER_INDEX
    CURRENT_PLAYER_INDEX = FIRST_PLAYER_INDEX
    SetFirstPlayerToken()
    ResetTricks()
@@ -386,6 +428,8 @@ function ResetDeck()
 
    local round = GetRound()
    SetRound(round + 1)
+
+   BETTING_FINISHED = false
 
    if GAME_STARTED then
       NextFirstPlayer()
