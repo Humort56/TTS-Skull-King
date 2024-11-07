@@ -17,6 +17,7 @@
         "group",
         "log",
         "JSON",
-        "onSave"
+        "onSave",
+        "getObjectsWithAllTags"
     ]
 }

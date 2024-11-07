@@ -1,10 +1,14 @@
 --[[ Lua code. See documentation: https://api.tabletopsimulator.com/ --]]
 
 PLAYER_COLORS = {'Red','Green', 'Teal', 'Blue', 'White', 'Brown'}
+SUITS = {'Red', 'Blue', 'Yellow', 'Black'}
+TRUMP_SUIT = 'Black'
+LEAD_SUIT = nil
 SEATED_PLAYERS = {}
 PLAYERS_BET = {}
 PLAYERS_TRICKS = {}
 GAME_STARTED = false
+TRICK_CAN_BE_CLAIMED = false
 BETTING_FINISHED = false
 TRICK_FINISHED = false
 FIRST_PLAYER_INDEX = nil
@@ -16,7 +20,9 @@ CARD_POSITION = 1
 function onSave()
    local saved_data = JSON.encode({
       GAME_STARTED=GAME_STARTED,
+      TRICK_CAN_BE_CLAIMED=TRICK_CAN_BE_CLAIMED,
       BETTING_FINISHED=BETTING_FINISHED,
+      LEAD_SUIT=LEAD_SUIT,
       TRICK_FINISHED=TRICK_FINISHED,
       SEATED_PLAYERS=SEATED_PLAYERS,
       FIRST_PLAYER_INDEX=FIRST_PLAYER_INDEX,
@@ -36,8 +42,10 @@ function onLoad(saved_data)
    if saved_data ~= '' then
       local loaded_data = JSON.decode(saved_data)
       GAME_STARTED = loaded_data.GAME_STARTED or GAME_STARTED
+      TRICK_CAN_BE_CLAIMED = loaded_data.TRICK_CAN_BE_CLAIMED or TRICK_CAN_BE_CLAIMED
       BETTING_FINISHED = loaded_data.BETTING_FINISHED or BETTING_FINISHED
       TRICK_FINISHED = loaded_data.TRICK_FINISHED or TRICK_FINISHED
+      LEAD_SUIT = loaded_data.LEAD_SUIT or LEAD_SUIT
       SEATED_PLAYERS = loaded_data.SEATED_PLAYERS or SEATED_PLAYERS
       FIRST_PLAYER_INDEX = loaded_data.FIRST_PLAYER_INDEX or FIRST_PLAYER_INDEX
       FIRST_PLAYER_SET_INDEX = loaded_data.FIRST_PLAYER_SET_INDEX or FIRST_PLAYER_SET_INDEX
@@ -144,30 +152,84 @@ function GroupCards(button, pcolor)
       return
    end
 
+   if not TRICK_CAN_BE_CLAIMED then
+      broadcastToColor("Wait for the end of a trick before clicking", pcolor, "Red")
+      return
+   end
+
+   -- calculate best card of trick
+   local winnerColor = GetBestCardPlayer()
+   broadcastToAll(string.format(
+      "The winner is [%s] %s",
+      Color.fromString(winnerColor):toHex(),
+      Player[winnerColor].steam_name
+   ))
+
+   LEAD_SUIT = nil
+   TRICK_CAN_BE_CLAIMED = false
+
    local zone = getObjectFromGUID("2b6f57")
-   local objects = zone.getObjects()
 
    CARD_POSITION = 1
+   PLAYERS_TRICKS[winnerColor] = PLAYERS_TRICKS[winnerColor] + 1
+   TRICK_FINISHED = false
 
-   for _, card in pairs(objects) do
+   for _, card in pairs(zone.getObjects()) do
       card.setLock(false)
+      card.removeTag('TrickCard')
+
+      for position, pcolor in pairs(SEATED_PLAYERS) do
+         card.removeTag('CardPosition' .. position)
+
+         if card.hasTag('c'..pcolor) then
+            if pcolor == winnerColor then
+               card.addTag('Winner')
+            end
+
+            card.removeTag('c'..pcolor)
+         end
+      end
+
+      if card.hasTag('Tigress') then
+         card.removeTag('Pirate')
+         card.removeTag('Escape')
+      end
+
+      if card.hasTag('Winner') then
+         card.removeTag('Winner')
+         MoveCardToSnapPoint(card, 'snapTrick' .. winnerColor .. PLAYERS_TRICKS[winnerColor], false)
+      end
    end
 
    for _, text in pairs(getObjectsWithTag("TextToRemove")) do
       text.destruct()
    end
 
-   PLAYERS_TRICKS[pcolor] = PLAYERS_TRICKS[pcolor] + 1
-   TRICK_FINISHED = false
-
-   local deck = group(objects)[1]
+   Wait.time(
+      function()
+         local objects = zone.getObjects()
+         local toMove = nil
+         if #objects > 1 then
+            toMove = group(objects)[1]
+         else
+            toMove = objects[1]
+         end
+         MoveToMainDeck(toMove)
+      end,
+      1
+   )
 
    if GetTricksPlayed() == GetRound() then
       -- calculate score and modify player's counter
-      ScorePoints()
+      Wait.time(
+         function()
+            ScorePoints()
+         end,
+         1
+      )
    end
 
-   FIRST_PLAYER_SET_INDEX = GetPlayerIndex(pcolor)
+   FIRST_PLAYER_SET_INDEX = GetPlayerIndex(winnerColor)
    CURRENT_PLAYER_INDEX = FIRST_PLAYER_SET_INDEX
 end
 
@@ -204,7 +266,51 @@ function ScorePoints()
    end
 end
 
-function PlayCard(card, pcolor)
+function GetSnapPointWithTag(tag)
+   for _, snapPoint in pairs(Global.getSnapPoints()) do
+      for _, snapTag in pairs(snapPoint.tags) do
+         if tag == snapTag then
+            return snapPoint
+         end
+      end
+   end
+end
+
+function MoveCardToSnapPoint(card, snapPointTag, fast)
+   local snap = GetSnapPointWithTag(snapPointTag)
+
+   local position = {snap.position.x, 2, snap.position.z}
+   if fast then
+      card.setPosition(position)
+   else
+      card.setPositionSmooth(position, false, false)
+   end
+   card.setRotationSmooth(
+      {
+         x=snap.rotation.x,
+         y=snap.rotation.y,
+         z=0
+      },
+      false,
+      false
+   )
+
+   Wait.frames(function() card.setLock(true) end, 80)
+end
+
+function CanPlayerPlayLeadSuit(pcolor)   
+   for _, card in pairs(Player[pcolor].getHandObjects()) do
+      if card.hasTag('Suit') then
+         if card.hasTag('Suit' .. LEAD_SUIT) then
+            return true
+         end
+      end
+   end
+
+   return false
+end
+
+function PlayCard(card, pcolor, alt)
    if not BETTING_FINISHED or TRICK_FINISHED then
       return
    end
@@ -214,42 +320,51 @@ function PlayCard(card, pcolor)
       return
    end
 
+   -- There is a lead suit
+   if false ~= LEAD_SUIT and nil ~= LEAD_SUIT then
+      if card.hasTag('Suit') and GetSuitColor(card) ~= LEAD_SUIT and CanPlayerPlayLeadSuit(pcolor) then
+         broadcastToColor("You must play the leading suit if you have one.", pcolor, Color.fromString("Red"))
+         return
+      end
+   end
+
    if GetPreviousPlayerIndex(FIRST_PLAYER_SET_INDEX) == CURRENT_PLAYER_INDEX then
       TRICK_FINISHED = true
    end
 
-   local snapPoints = Global.getSnapPoints()
-   local snapTrickCard = nil
+   local snapTag = 'snapTrickCard' .. CARD_POSITION
 
-   for _, snapPoint in pairs(snapPoints) do
-      for _, tag in pairs(snapPoint.tags) do
-         if tag == 'snapTrickCard' .. CARD_POSITION then
-            snapTrickCard = snapPoint
-         end
-      end
-   end
-
-   if snapTrickCard == nil then
-      return
-   end
-
+   card.addTag('TrickCard')
+   card.addTag('CardPosition' .. CARD_POSITION)
    CARD_POSITION = CARD_POSITION + 1
    CURRENT_PLAYER_INDEX = GetNextPlayerIndex(CURRENT_PLAYER_INDEX)
 
    card.clearButtons()
 
-   local snapPosition = snapTrickCard.position
-   card.setPositionSmooth(snapPosition, false, false)
-   card.setRotationSmooth(
-      {
-         x=snapTrickCard.rotation.x,
-         y=snapTrickCard.rotation.y,
-         z=0
-      },
-      false,
-      false
-   )
-   card.setLock(true)
+   if card.hasTag('Tigress') then
+      local tag = 'Pirate'
+      local name = 'a ' .. tag
+
+      if true == alt then
+         tag = 'Escape'
+         name = 'an ' .. tag
+      end
+
+      card.addTag(tag)
+      broadcastToColor("You played the Scary Mary as " .. name, pcolor)
+   end
+
+   if nil == LEAD_SUIT then
+      if card.hasTag('Suit') then
+         LEAD_SUIT = GetSuitColor(card)
+      elseif card.hasTag('Face') and not card.hasTag('Escape') then
+         LEAD_SUIT = false
+      end
+   end
+
+   MoveCardToSnapPoint(card, snapTag, true)
+
+   card.addTag('c'..pcolor)
 
    Wait.frames(
       function()
@@ -261,6 +376,7 @@ function PlayCard(card, pcolor)
          local textRotation = textTop.getRotation()
          local textBottom = textTop.clone()
 
+         local snapPosition = GetSnapPointWithTag(snapTag).position
          textTop.setPosition({
             x=snapPosition.x,
             y=snapPosition.y,
@@ -273,11 +389,95 @@ function PlayCard(card, pcolor)
             z=snapPosition.z - 2.8
          })
 
-         textTop.setRotation({x=textRotation.x, y=snapTrickCard.rotation.y, z=textRotation.z})
+         textTop.setRotation({x=textRotation.x, y=180, z=textRotation.z})
          textBottom.setRotation({x=textRotation.x, y=0, z=textRotation.z})
       end,
-      40
+      30
    )
+
+   if TRICK_FINISHED then
+      Wait.time(
+         function()
+            TRICK_CAN_BE_CLAIMED = true
+         end,
+         3
+      )
+   end
+end
+
+function GetBestCardPlayer()
+   local bestCard = nil
+   local firstMermaid = nil
+
+   for i = 1, #SEATED_PLAYERS do
+      local card = getObjectsWithAllTags({'TrickCard', 'CardPosition'..i})[1]
+      -- local card = GetObjectWithTag('CardPosition'..i)
+
+      if bestCard ~= nil then
+         if card.hasTag('Suit') then
+            if bestCard.hasTag('Escape') then
+               bestCard = card
+            elseif bestCard.hasTag('Suit') then
+               local cardSuit = GetSuitColor(card)
+               local bestCardSuit = GetSuitColor(bestCard)
+
+               if cardSuit == bestCardSuit then
+                  if tonumber(card.getGMNotes()) > tonumber(bestCard.getGMNotes()) then
+                     bestCard = card
+                  end
+               elseif cardSuit == TRUMP_SUIT then
+                  bestCard = card
+               end
+            end
+         elseif card.hasTag('Face') then
+            if card.hasTag('Mermaid') and firstMermaid == nil then
+               firstMermaid = card
+            end
+
+            if bestCard.hasTag('Face') and not bestCard.hasTag('Escape') then
+               local cardFace = GetFaceValue(card)
+               local bestCardFace = GetFaceValue(bestCard)
+
+               if cardFace > bestCardFace then
+                  bestCard = card
+               end
+            else
+               bestCard = card
+            end
+         end
+      else
+         bestCard = card
+      end
+   end
+
+   if bestCard.hasTag('SkullKing') and firstMermaid ~= nil then
+      bestCard = firstMermaid
+   end
+
+   for _, tag in pairs(bestCard.getTags()) do
+      local match = string.match(tag, '^c(.*)$')
+      if match ~= nil then
+         return match
+      end
+   end
+end
+
+function GetSuitColor(card)
+   for _, suit in pairs(SUITS) do
+      if card.hasTag('Suit'..suit) then
+         return suit
+      end
+   end
+
+   return false
+end
+
+function GetFaceValue(card)
+   for value, face in pairs({'Mermaid', 'Pirate', 'SkullKing'}) do
+      if card.hasTag(face) then
+         return value
+      end
+   end
 end
 
 function GetPlayerIndex(player_color)
@@ -399,6 +599,11 @@ function DealCards()
    end
 end
 
+function MoveToMainDeck(object)
+   object.setRotation({0, 180, 180})
+   object.setPosition({-45.00, 2.02, -3.00})
+end
+
 function ResetDeck()
    CARD_POSITION = 1
    local objects = getAllObjects()
@@ -411,8 +616,8 @@ function ResetDeck()
       local obj = objects[i]
       if(obj.name == 'Deck' or obj.name == 'Card') then
         if obj ~= nil then
-          objects[i].setRotation({0, 180, 180})
-          objects[i].setPosition({-45.00, 2.02, -3.00})
+            obj.setLock(false)
+            MoveToMainDeck(obj)
         end
      end
    end
